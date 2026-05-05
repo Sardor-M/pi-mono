@@ -31,12 +31,17 @@ const PROBE_TIMEOUT_MS = 2000;
 const FALLBACK_CONTEXT_WINDOW = 32768;
 const FALLBACK_MAX_TOKENS = 4096;
 
-// Curated table of context-window/max-tokens defaults for popular models
-// llama.cpp commonly serves. Keys are matched as case-insensitive substrings of
-// the served model id, longest match wins. Values reflect the model's nominal
-// limits, not what llama.cpp may have been started with (controlled by
-// `--ctx-size` / `-c`); users should override via `~/.pi/agent/models.json` if
-// they ran llama-server with a smaller context.
+// Fallback table for popular models llama.cpp commonly serves, used only
+// when the server's /v1/models response does not carry the field directly.
+// Upstream is extending /v1/models with richer per-model metadata (per
+// julien-c's review on #4154); once it lands, `buildModel` will pick those
+// fields up automatically and this table will only matter for older
+// llama-server builds. Users can always override per model via
+// `~/.pi/agent/models.json`.
+//
+// Keys match as case-insensitive substrings of the served model id; longest
+// match wins. Values are the model's nominal limits, not what llama.cpp was
+// started with (controlled by `--ctx-size` / `-c`).
 const KNOWN_MODELS: Array<{ match: string; contextWindow: number; maxTokens: number; reasoning?: boolean }> = [
 	{ match: "qwen2.5-coder-32b", contextWindow: 131072, maxTokens: 8192 },
 	{ match: "qwen2.5-coder-14b", contextWindow: 131072, maxTokens: 8192 },
@@ -136,9 +141,11 @@ async function probeModels(baseUrl: string): Promise<ProbeResult> {
 
 function buildModel(entry: OpenAIModelEntry): ProviderModelConfig {
 	const known = lookupKnownModel(entry.id);
-	// llama-server does not include the effective context length in the
-	// OpenAI-shaped /v1/models response. Honor any context_length the server
-	// happens to expose, otherwise use the curated default for the family.
+	// Prefer server-reported metadata when available; fall back to the
+	// curated table otherwise. llama-server's /v1/models is being extended
+	// upstream to expose model details directly (per julien-c's review on
+	// #4154), so as new fields land they can be added to OpenAIModelEntry
+	// and consumed here without further structural changes.
 	const contextWindow =
 		typeof entry.context_length === "number" && entry.context_length > 0 ? entry.context_length : known.contextWindow;
 	return {
